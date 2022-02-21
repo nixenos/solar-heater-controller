@@ -60,7 +60,8 @@ OneWire oneWire(oneWireBus);
 DallasTemperature sensors(&oneWire);
 
 int pageNumber = 0;
-int currentProduction = 0;
+double currentProduction = 0.0;
+double currentDisplayProduction = 0.0;
 volatile float waterTemp = 0.0;
 volatile float oldWaterTemp = 0.0;
 int maxWaterTemp = 80;
@@ -81,6 +82,8 @@ bool HEAT_MIN_FLAG = true;
 
 DateTime oldMeasureTime;
 DateTime oldMeasureTimeMODBUS;
+DateTime oldMeasureTimeProductionUpdate;
+DateTime oldMeasureTimeProductionUpdateDisplay;
 
 char pageTitles[13][17] = {
   "Akt. produkcja",
@@ -152,7 +155,7 @@ void printTempString() {
 }
 
 void printCurrentProductionString() {
-    lcd.print(currentProduction);
+    lcd.print(currentDisplayProduction);
     lcd.print(" kW");
 }
 
@@ -214,15 +217,19 @@ void setup() {
       Serial.printf("%d", data[i]);
     }
 
-    int temporaryValue = 0;
+    double temporaryValue = 0;
 
-    for (size_t i = 0; i < length; ++i) {
-      temporaryValue += data[length - 1 - i];
-    }
+    temporaryValue = (((double) data[0] * 256 + (double) data[1]) / 100);
 
-    Serial.printf("\nval: %d", temporaryValue);
+    Serial.printf("\nval: %f", temporaryValue);
     Serial.print("\n\n");
-    currentProduction = temporaryValue;
+    DateTime currentTime = rtc.now();
+    if (currentTime.unixtime() - oldMeasureTimeProductionUpdate.unixtime() >= 1800) { //30 minutes
+    //if (currentTime.unixtime() - oldMeasureTimeProductionUpdate.unixtime() >= 5) { //5 seconds
+      currentProduction = temporaryValue;
+      oldMeasureTimeProductionUpdate = currentTime;
+    }
+    currentDisplayProduction = temporaryValue;
   });
   MODBUS_INTERFACE.onError([](esp32Modbus::Error error) {
     Serial.printf("error: 0x%02x\n\n", static_cast<uint8_t>(error));
@@ -269,6 +276,8 @@ void setup() {
 
   oldMeasureTime = rtc.now();
   oldMeasureTimeMODBUS = rtc.now();
+  oldMeasureTimeProductionUpdate = rtc.now();
+  oldMeasureTimeProductionUpdateDisplay = rtc.now();
 }
 
 void loop() {
@@ -529,7 +538,8 @@ void loop() {
   DateTime currentTime(rtc.now());
   if (currentTime.unixtime() - oldMeasureTimeMODBUS.unixtime() >= 5) {
     Serial.print("sending Modbus request...\n");
-    MODBUS_INTERFACE.readHoldingRegisters(0x01, 0x05, 1);
+    MODBUS_INTERFACE.readHoldingRegisters(0x01, 0x0C, 2);
+    //MODBUS_INTERFACE.readHoldingRegisters(0x01, 0x19, 2);
     oldMeasureTimeMODBUS = currentTime;
   }
 
