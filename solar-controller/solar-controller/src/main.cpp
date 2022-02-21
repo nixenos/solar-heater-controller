@@ -232,7 +232,7 @@ void setup() {
     for (size_t i = 0; i < length; ++i) {
       Serial.printf("%d", data[i]);
     }
-
+    Serial.printf("Value reading: %d", currentReadingValue);
     int temporaryIntValue = 0;
 
     double temporaryValue = 0;
@@ -565,17 +565,21 @@ void loop() {
   }
   }
   DateTime currentTime(rtc.now());
-  if (currentTime.unixtime() - oldMeasureTimeMODBUS.unixtime() >= 5) {
-    Serial.print("sending Modbus request (read current production)...\n");
-    currentReadingValue = CURRENT_PRODUCTION_READ;
-    MODBUS_INTERFACE.readHoldingRegisters(0x01, 0x0C, 2);
-    delay(80);
-    currentReadingValue = TODAY_PRODUCTION_READ;
-    MODBUS_INTERFACE.readHoldingRegisters(0x01, 0x19, 2);
-    delay(80);
-    currentReadingValue = TODAY_GENERATION_READ;
-    MODBUS_INTERFACE.readHoldingRegisters(0x01, 0x1A, 2);
-    //MODBUS_INTERFACE.readHoldingRegisters(0x01, 0x19, 2);
+  if (currentTime.unixtime() - oldMeasureTimeMODBUS.unixtime() >= 2) {
+    ++currentReadingValue;
+    currentReadingValue=currentReadingValue%3;
+    if (currentReadingValue == CURRENT_PRODUCTION_READ){
+      Serial.print("sending Modbus request (read current production)...\n");
+      MODBUS_INTERFACE.readHoldingRegisters(0x01, 0x0C, 2);
+    }
+    if (currentReadingValue == TODAY_PRODUCTION_READ) {
+      Serial.print("sending Modbus request (read today production)...\n");
+      MODBUS_INTERFACE.readHoldingRegisters(0x01, 0x19, 2);
+    }
+    if (currentReadingValue == TODAY_GENERATION_READ){
+      Serial.print("sending Modbus request (read today generation time)...\n");
+      MODBUS_INTERFACE.readHoldingRegisters(0x01, 0x1A, 2);
+    }
     oldMeasureTimeMODBUS = currentTime;
   }
 
@@ -605,22 +609,41 @@ void loop() {
         heaterState = true;
       }
     }
+  // } else {
+  //     heaterState = true;
+  //     if ((int)waterTemp >= valuesTab[MIN_TEMP] + valuesTab[MAX_TEMP]) {
+  //       HEAT_MAX_FLAG = true;
+  //     }
+  //     if ((int)waterTemp <= valuesTab[MIN_TEMP] - valuesTab[MAX_TEMP]) {
+  //       HEAT_MAX_FLAG = false;
+  //     }
+  //     if (abs(valuesTab[MIN_TEMP] - (int)waterTemp) <= valuesTab[MAX_TEMP]) {
+  //       if (HEAT_MAX_FLAG) {
+  //         heaterState = false;
+  //       } else {
+  //         heaterState = true;
+  //       }
+  //     }
+  //     if ((int)waterTemp < valuesTab[MIN_TEMP] - valuesTab[MAX_TEMP]) {
+  //       heaterState = true;
+  //     }
+  // }
   } else {
       heaterState = true;
-      if ((int)waterTemp >= valuesTab[MIN_TEMP] + valuesTab[MAX_TEMP]) {
+      if ((int)waterTemp >= 75 + 5) {
         HEAT_MAX_FLAG = true;
       }
-      if ((int)waterTemp <= valuesTab[MIN_TEMP] - valuesTab[MAX_TEMP]) {
+      if ((int)waterTemp <= 75 - 5) {
         HEAT_MAX_FLAG = false;
       }
-      if (abs(valuesTab[MIN_TEMP] - (int)waterTemp) <= valuesTab[MAX_TEMP]) {
+      if (abs(75 - (int)waterTemp) <= 5) {
         if (HEAT_MAX_FLAG) {
           heaterState = false;
         } else {
           heaterState = true;
         }
       }
-      if ((int)waterTemp < valuesTab[MIN_TEMP] - valuesTab[MAX_TEMP]) {
+      if ((int)waterTemp < 75 - 5) {
         heaterState = true;
       }
   }
