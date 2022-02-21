@@ -41,6 +41,10 @@
 #define MONTH_SETTING 11
 #define YEAR_SETTING 12
 
+#define CURRENT_PRODUCTION_READ 0
+#define TODAY_PRODUCTION_READ 1
+#define TODAY_GENERATION_READ 2
+
 LiquidCrystal_I2C lcd(0x27,20,4);
 
 RTC_PCF8563 rtc;
@@ -69,6 +73,18 @@ int minWaterTemp = 50;
 int minPrduction = 1;
 int hourTempExpected = 18;
 int lastReadTime = 0;
+
+double todayProductionValue = 0.0;
+double todayGenerationTime = 0.0;
+
+/*
+* defines which value is read from inverter
+* 0 - current production
+* 1 - today production
+* 2 - today generation time
+* 3 - ...
+*/
+int currentReadingValue = 0;
 
 bool valDownMarker = false;
 bool valUpMarker = false;
@@ -217,6 +233,8 @@ void setup() {
       Serial.printf("%d", data[i]);
     }
 
+    int temporaryIntValue = 0;
+
     double temporaryValue = 0;
 
     temporaryValue = (((double) data[0] * 256 + (double) data[1]) / 100);
@@ -224,12 +242,23 @@ void setup() {
     Serial.printf("\nval: %f", temporaryValue);
     Serial.print("\n\n");
     DateTime currentTime = rtc.now();
-    if (currentTime.unixtime() - oldMeasureTimeProductionUpdate.unixtime() >= 1800) { //30 minutes
+    if (currentTime.unixtime() - oldMeasureTimeProductionUpdate.unixtime() >= 1800 && currentReadingValue == CURRENT_PRODUCTION_READ) { //30 minutes
     //if (currentTime.unixtime() - oldMeasureTimeProductionUpdate.unixtime() >= 5) { //5 seconds
       currentProduction = temporaryValue;
       oldMeasureTimeProductionUpdate = currentTime;
     }
-    currentDisplayProduction = temporaryValue;
+    if (currentReadingValue == CURRENT_PRODUCTION_READ) {
+      currentDisplayProduction = temporaryValue;
+    }
+    if (currentReadingValue == TODAY_PRODUCTION_READ) {
+      todayProductionValue = temporaryValue;
+    }
+    if (currentReadingValue == TODAY_GENERATION_READ) {
+      todayGenerationTime = temporaryValue;
+    }
+    Serial.printf("current production: %f\n", currentDisplayProduction);
+    Serial.printf("today production: %f\n", todayProductionValue);
+    Serial.printf("today generation time: %f\n", todayGenerationTime);
   });
   MODBUS_INTERFACE.onError([](esp32Modbus::Error error) {
     Serial.printf("error: 0x%02x\n\n", static_cast<uint8_t>(error));
@@ -537,8 +566,15 @@ void loop() {
   }
   DateTime currentTime(rtc.now());
   if (currentTime.unixtime() - oldMeasureTimeMODBUS.unixtime() >= 5) {
-    Serial.print("sending Modbus request...\n");
+    Serial.print("sending Modbus request (read current production)...\n");
+    currentReadingValue = CURRENT_PRODUCTION_READ;
     MODBUS_INTERFACE.readHoldingRegisters(0x01, 0x0C, 2);
+    delay(80);
+    currentReadingValue = TODAY_PRODUCTION_READ;
+    MODBUS_INTERFACE.readHoldingRegisters(0x01, 0x19, 2);
+    delay(80);
+    currentReadingValue = TODAY_GENERATION_READ;
+    MODBUS_INTERFACE.readHoldingRegisters(0x01, 0x1A, 2);
     //MODBUS_INTERFACE.readHoldingRegisters(0x01, 0x19, 2);
     oldMeasureTimeMODBUS = currentTime;
   }
@@ -593,6 +629,30 @@ void loop() {
     heaterState = false;
   }
 
+  if ((int)waterTemp <= 40) {
+    heaterState = true;
+  }
+
+  if (currentTime.hour() >= 22 || currentTime.hour() <= 6) {
+    heaterState = true;
+      if ((int)waterTemp >= valuesTab[MIN_TEMP] + valuesTab[MAX_TEMP]) {
+        HEAT_MAX_FLAG = true;
+      }
+      if ((int)waterTemp <= valuesTab[MIN_TEMP] - valuesTab[MAX_TEMP]) {
+        HEAT_MAX_FLAG = false;
+      }
+      if (abs(valuesTab[MIN_TEMP] - (int)waterTemp) <= valuesTab[MAX_TEMP]) {
+        if (HEAT_MAX_FLAG) {
+          heaterState = false;
+        } else {
+          heaterState = true;
+        }
+      }
+      if ((int)waterTemp < valuesTab[MIN_TEMP] - valuesTab[MAX_TEMP]) {
+        heaterState = true;
+      }
+  }
+
   if (heaterState) {
     digitalWrite(RELAY, LOW);
   } else {
@@ -603,3 +663,6 @@ void loop() {
 
 }
 
+/*
+MAX_TEMP = DELTA TEMP
+*/
