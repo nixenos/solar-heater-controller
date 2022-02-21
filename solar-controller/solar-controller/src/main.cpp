@@ -9,6 +9,9 @@
 #include <HardwareSerial.h>
 #include <esp32ModbusRTU.h>
 #include <algorithm>
+#include <WiFi.h>
+#include "secrets.h"
+#include "ESPAsyncWebServer.h"
 
 #define DEBOUNCE_TIME 50
 #define EEPROM_SIZE 512
@@ -66,8 +69,8 @@ DallasTemperature sensors(&oneWire);
 int pageNumber = 0;
 double currentProduction = 0.0;
 double currentDisplayProduction = 0.0;
-volatile float waterTemp = 0.0;
-volatile float oldWaterTemp = 0.0;
+volatile double waterTemp = 0.0;
+volatile double oldWaterTemp = 0.0;
 int maxWaterTemp = 80;
 int minWaterTemp = 50;
 int minPrduction = 1;
@@ -120,6 +123,11 @@ char pageTitles[13][17] = {
 uint8_t valuesTab[13] = {0,0,0,0,50,80,1,18,50,50,0,0};
 
 TwoWire I2C2 = TwoWire(1); //I2C2 bus
+
+const char *ssid = SSID;
+const char *password = PASSWORD;
+
+AsyncWebServer server(80);
 
 void IRAM_ATTR SETT_UP_ISR() { 
   pageUpMarker = true;
@@ -200,6 +208,13 @@ void getCurrentTemp() {
   waterTemp = cachedTemp;
 }
 
+String stringify(double value) {
+  return String(value);
+}
+
+String stringify(int value) {
+  return String(value);
+}
 void setup() {
   EEPROM.begin(EEPROM_SIZE);
   delay(2000);
@@ -307,6 +322,69 @@ void setup() {
   oldMeasureTimeMODBUS = rtc.now();
   oldMeasureTimeProductionUpdate = rtc.now();
   oldMeasureTimeProductionUpdateDisplay = rtc.now();
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+  WiFi.begin(ssid, password);
+  int t1 = millis();
+  int t2 = t1;
+  while (WiFi.status() != WL_CONNECTED) {
+    t1=millis();
+    if (t1-t2 >= 5000) {
+      Serial.println("WiFi not connected!");
+      break;
+    }
+    delay(500);
+    Serial.print(".");
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    WiFi.begin("dom241", password);
+    t1=millis();
+    t2=t1;
+    while (WiFi.status() != WL_CONNECTED) {
+    t1=millis();
+    if (t1-t2 >= 5000) {
+      Serial.println("WiFi not connected!");
+      break;
+    }
+    delay(500);
+    Serial.print(".");
+    }
+  }
+  // Print local IP address and start web server
+  Serial.println("");
+  Serial.println("WiFi connected.");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+
+  server.on("/production/current", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send_P(200, "text/plain", stringify(currentDisplayProduction).c_str());
+  });
+  
+  server.on("/production/today", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send_P(200, "text/plain", stringify(todayProductionValue).c_str());
+  });
+
+  server.on("/production/today/time", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send_P(200, "text/plain", stringify(todayGenerationTime).c_str());
+  });
+  
+  server.on("/temperature/current", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send_P(200, "text/plain", stringify(waterTemp).c_str());
+  });
+
+  server.on("/temperature/expected", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send_P(200, "text/plain", stringify(valuesTab[MIN_TEMP]).c_str());
+  });
+
+  server.on("/temperature/delta", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send_P(200, "text/plain", stringify(valuesTab[MAX_TEMP]).c_str());
+  });
+    
+  server.on("/production/expected", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send_P(200, "text/plain", stringify(valuesTab[MIN_PRODUCTION]).c_str());
+  });
+
+  server.begin();
 }
 
 void loop() {
