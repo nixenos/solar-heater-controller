@@ -47,6 +47,12 @@
 #define CURRENT_PRODUCTION_READ 0
 #define TODAY_PRODUCTION_READ 1
 #define TODAY_GENERATION_READ 2
+#define A_PHASE_VOLTAGE_READ 3
+#define B_PHASE_VOLTAGE_READ 4
+#define C_PHASE_VOLTAGE_READ 5
+#define TOTAL_PRODUCTION_HIGH_READ 6
+#define TOTAL_PRODUCTION_LOW_READ 7
+
 
 LiquidCrystal_I2C lcd(0x27,20,4);
 
@@ -80,12 +86,23 @@ int lastReadTime = 0;
 double todayProductionValue = 0.0;
 double todayGenerationTime = 0.0;
 
+volatile double a_phase_voltage = 0.0;
+volatile double b_phase_voltage = 0.0;
+volatile double c_phase_voltage = 0.0;
+
+volatile double total_production_high = 0.0;
+volatile double total_production_low = 0.0;
+volatile double total_production = 0.0;
 /*
 * defines which value is read from inverter
 * 0 - current production
 * 1 - today production
 * 2 - today generation time
-* 3 - ...
+* 3 - A-phase voltage
+* 4 - B-phase voltage
+* 5 - C-phase voltage
+* 6 - total production high
+* 7 - total production low
 */
 int currentReadingValue = 0;
 
@@ -215,6 +232,11 @@ String stringify(double value) {
 String stringify(int value) {
   return String(value);
 }
+
+String stringify(bool value) {
+  return String(value ? "True" : "False");
+}
+
 void setup() {
   EEPROM.begin(EEPROM_SIZE);
   delay(2000);
@@ -252,7 +274,16 @@ void setup() {
 
     double temporaryValue = 0;
 
+    
     temporaryValue = (((double) data[0] * 256 + (double) data[1]) / 100);
+
+    if (currentReadingValue == A_PHASE_VOLTAGE_READ || currentReadingValue == B_PHASE_VOLTAGE_READ || currentReadingValue == C_PHASE_VOLTAGE_READ) {
+      temporaryValue = ((((double) data[0] * 256) + (double) data[1]) / 10);
+    }
+
+    if (currentReadingValue == TOTAL_PRODUCTION_HIGH_READ || currentReadingValue == TOTAL_PRODUCTION_LOW_READ) {
+      temporaryValue = ((((double) data[0] * 256) + (double) data[1]) / 1);
+    }
 
     Serial.printf("\nval: %f", temporaryValue);
     Serial.print("\n\n");
@@ -271,9 +302,31 @@ void setup() {
     if (currentReadingValue == TODAY_GENERATION_READ) {
       todayGenerationTime = temporaryValue;
     }
+    if (currentReadingValue == A_PHASE_VOLTAGE_READ) {
+      a_phase_voltage = temporaryValue;
+    }
+    if (currentReadingValue == B_PHASE_VOLTAGE_READ) {
+      b_phase_voltage = temporaryValue;
+    }
+    if (currentReadingValue == C_PHASE_VOLTAGE_READ) {
+      c_phase_voltage = temporaryValue;
+    }
+    if (currentReadingValue == TOTAL_PRODUCTION_HIGH_READ) {
+      total_production_high = temporaryValue * (2 << 16);
+    }
+    if (currentReadingValue == TOTAL_PRODUCTION_LOW_READ) {
+      total_production_low = temporaryValue;
+      total_production = total_production_high + total_production_low;
+    }
     Serial.printf("current production: %f\n", currentDisplayProduction);
     Serial.printf("today production: %f\n", todayProductionValue);
     Serial.printf("today generation time: %f\n", todayGenerationTime);
+    Serial.printf("a phase voltage: %f\n", a_phase_voltage);
+    Serial.printf("b phase voltage: %f\n", b_phase_voltage);
+    Serial.printf("c phase voltage: %f\n", c_phase_voltage);
+    Serial.printf("total production high-byte: %f\n", total_production_high);
+    Serial.printf("total production low-byte: %f\n", total_production_low);
+    Serial.printf("total production: %f\n", total_production);
   });
   MODBUS_INTERFACE.onError([](esp32Modbus::Error error) {
     Serial.printf("error: 0x%02x\n\n", static_cast<uint8_t>(error));
@@ -364,7 +417,7 @@ void setup() {
     request->send_P(200, "text/plain", stringify(todayProductionValue).c_str());
   });
 
-  server.on("/production/today/time", HTTP_GET, [](AsyncWebServerRequest *request){
+  server.on("/production/time", HTTP_GET, [](AsyncWebServerRequest *request){
     request->send_P(200, "text/plain", stringify(todayGenerationTime).c_str());
   });
   
@@ -382,6 +435,26 @@ void setup() {
     
   server.on("/production/expected", HTTP_GET, [](AsyncWebServerRequest *request){
     request->send_P(200, "text/plain", stringify(valuesTab[MIN_PRODUCTION]).c_str());
+  });
+  
+  server.on("/heater/status", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send_P(200, "text/plain", stringify(heaterState).c_str());
+  });
+  
+  server.on("/voltage/a", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send_P(200, "text/plain", stringify(a_phase_voltage).c_str());
+  });
+  
+  server.on("/voltage/b", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send_P(200, "text/plain", stringify(b_phase_voltage).c_str());
+  });
+  
+  server.on("/voltage/c", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send_P(200, "text/plain", stringify(c_phase_voltage).c_str());
+  });
+  
+  server.on("/production/total", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send_P(200, "text/plain", stringify(total_production).c_str());
   });
 
   server.begin();
@@ -645,7 +718,7 @@ void loop() {
   DateTime currentTime(rtc.now());
   if (currentTime.unixtime() - oldMeasureTimeMODBUS.unixtime() >= 2) {
     ++currentReadingValue;
-    currentReadingValue=currentReadingValue%3;
+    currentReadingValue=currentReadingValue%8;
     if (currentReadingValue == CURRENT_PRODUCTION_READ){
       Serial.print("sending Modbus request (read current production)...\n");
       MODBUS_INTERFACE.readHoldingRegisters(0x01, 0x0C, 2);
@@ -657,6 +730,26 @@ void loop() {
     if (currentReadingValue == TODAY_GENERATION_READ){
       Serial.print("sending Modbus request (read today generation time)...\n");
       MODBUS_INTERFACE.readHoldingRegisters(0x01, 0x1A, 2);
+    }
+    if (currentReadingValue == A_PHASE_VOLTAGE_READ){
+      Serial.print("sending Modbus request (read a-phase voltage)...\n");
+      MODBUS_INTERFACE.readHoldingRegisters(0x01, 0x0F, 2);
+    }
+    if (currentReadingValue == B_PHASE_VOLTAGE_READ){
+      Serial.print("sending Modbus request (read a-phase voltage)...\n");
+      MODBUS_INTERFACE.readHoldingRegisters(0x01, 0x11, 2);
+    }
+    if (currentReadingValue == C_PHASE_VOLTAGE_READ){
+      Serial.print("sending Modbus request (read a-phase voltage)...\n");
+      MODBUS_INTERFACE.readHoldingRegisters(0x01, 0x13, 2);
+    }
+    if (currentReadingValue == TOTAL_PRODUCTION_HIGH_READ){
+      Serial.print("sending Modbus request (read total production high byte)...\n");
+      MODBUS_INTERFACE.readHoldingRegisters(0x01, 0x15, 2);
+    }
+    if (currentReadingValue == TOTAL_PRODUCTION_LOW_READ){
+      Serial.print("sending Modbus request (read total production low byte)...\n");
+      MODBUS_INTERFACE.readHoldingRegisters(0x01, 0x16, 2);
     }
     oldMeasureTimeMODBUS = currentTime;
   }
