@@ -12,6 +12,8 @@
 #include <WiFi.h>
 #include "secrets.h"
 #include "ESPAsyncWebServer.h"
+#include <ESPNtpClient.h>
+#include "time.h"
 
 #define DEBOUNCE_TIME 50
 #define EEPROM_SIZE 512
@@ -116,6 +118,15 @@ bool heaterState = false;
 bool HEAT_MAX_FLAG = false;
 bool HEAT_MIN_FLAG = true;
 
+unsigned long rtcrst1 = millis();
+unsigned long rtcrst2 = rtcrst1;
+
+unsigned long gettemp1 = millis();
+unsigned long gettemp2 = gettemp1;
+
+unsigned long sendmodbus1 = millis();
+unsigned long sendmodbus2 = sendmodbus1;
+
 DateTime oldMeasureTime;
 DateTime oldMeasureTimeMODBUS;
 DateTime oldMeasureTimeProductionUpdate;
@@ -136,6 +147,8 @@ char pageTitles[13][17] = {
   "Ustaw. miesiaca",
   "Ustaw. roku",
 };
+
+const PROGMEM char* ntpServer = "pool.ntp.org";
 
 uint8_t valuesTab[13] = {0,0,0,0,50,80,1,18,50,50,0,0};
 
@@ -168,9 +181,9 @@ void IRAM_ATTR VAL_DOWN_ISR() {
 
 void printTimeString() {
   DateTime now = rtc.now();
-  lcd.print(now.hour());
+  lcd.printf("%02d", now.hour());
   lcd.print(":");
-  lcd.print(now.minute());
+  lcd.printf("%02d", now.minute());
 }
 
 void printDateString() {
@@ -234,7 +247,7 @@ String stringify(int value) {
 }
 
 String stringify(bool value) {
-  return String(value ? "True" : "False");
+  return String(value ? "1" : "0");
 }
 
 void setup() {
@@ -410,54 +423,91 @@ void setup() {
   Serial.println(WiFi.localIP());
 
   server.on("/production/current", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send_P(200, "text/plain", stringify(currentDisplayProduction).c_str());
+    String temp = "current_production " + stringify(currentDisplayProduction);
+    request->send_P(200, "text/plain", temp.c_str());
   });
   
   server.on("/production/today", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send_P(200, "text/plain", stringify(todayProductionValue).c_str());
+    String temp = "today_production " + stringify(todayProductionValue);
+    request->send_P(200, "text/plain", temp.c_str());
   });
 
   server.on("/production/time", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send_P(200, "text/plain", stringify(todayGenerationTime).c_str());
+    String temp = "today_production_time " + stringify(todayGenerationTime);
+    request->send_P(200, "text/plain", temp.c_str());
   });
   
   server.on("/temperature/current", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send_P(200, "text/plain", stringify(waterTemp).c_str());
+    String temp = "current_temperature " + stringify(waterTemp);
+    request->send_P(200, "text/plain", temp.c_str());
   });
 
   server.on("/temperature/expected", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send_P(200, "text/plain", stringify(valuesTab[MIN_TEMP]).c_str());
+    String temp = "expected_temperature " + stringify(valuesTab[MIN_TEMP]);
+    request->send_P(200, "text/plain", temp.c_str());
   });
 
   server.on("/temperature/delta", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send_P(200, "text/plain", stringify(valuesTab[MAX_TEMP]).c_str());
+    String temp = "temperature_delta " + stringify(valuesTab[MAX_TEMP]);
+    request->send_P(200, "text/plain", temp.c_str());
   });
     
   server.on("/production/expected", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send_P(200, "text/plain", stringify(valuesTab[MIN_PRODUCTION]).c_str());
+    String temp = "expected_production " + stringify(valuesTab[MIN_PRODUCTION]);
+    request->send_P(200, "text/plain", temp.c_str());
   });
   
   server.on("/heater/status", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send_P(200, "text/plain", stringify(heaterState).c_str());
+    String temp = "heating " + stringify(heaterState);
+    request->send_P(200, "text/plain", temp.c_str());
   });
   
   server.on("/voltage/a", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send_P(200, "text/plain", stringify(a_phase_voltage).c_str());
+    String temp = "a_phase_voltage " + stringify(a_phase_voltage);
+    request->send_P(200, "text/plain", temp.c_str());
   });
   
   server.on("/voltage/b", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send_P(200, "text/plain", stringify(b_phase_voltage).c_str());
+    String temp = "b_phase_voltage " + stringify(b_phase_voltage);
+    request->send_P(200, "text/plain", temp.c_str());
   });
   
   server.on("/voltage/c", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send_P(200, "text/plain", stringify(c_phase_voltage).c_str());
+    String temp = "c_phase_voltage " + stringify(c_phase_voltage);
+    request->send_P(200, "text/plain", temp.c_str());
   });
   
   server.on("/production/total", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send_P(200, "text/plain", stringify(total_production).c_str());
+    String temp = "total_production " + stringify(total_production);
+    request->send_P(200, "text/plain", temp.c_str());
   });
 
   server.begin();
+
+  NTP.onNTPSyncEvent ([] (NTPEvent_t event) {
+    struct tm  ts;
+    char       buf[80];
+    time_t      now;
+    now = NTP.millis()/1000;
+    // Format time, "ddd yyyy-mm-dd hh:mm:ss zzz"
+    ts = *localtime(&now);
+    strftime(buf, sizeof(buf), "%FT%T", &ts);
+  Serial.printf("%s\n", buf);
+  DateTime ntpDateTime(buf);
+    if (WiFi.status() == WL_CONNECTED) {
+      rtc.adjust(ntpDateTime);
+      rtc.start();
+    }
+  });
+  NTP.setTimeZone(TZ_Europe_Warsaw);
+  NTP.setInterval(300);
+  NTP.setNTPTimeout(1000);
+        // NTP.setMinSyncAccuracy (5000);
+        // NTP.settimeSyncThreshold (3000);
+  NTP.begin(ntpServer);
+  delay(1000);
+  NTP.getTime();
+  delay(1000);
 }
 
 void loop() {
@@ -716,7 +766,12 @@ void loop() {
   }
   }
   DateTime currentTime(rtc.now());
-  if (currentTime.unixtime() - oldMeasureTimeMODBUS.unixtime() >= 2) {
+  sendmodbus1=millis();
+  if(sendmodbus2 > sendmodbus1) {
+    sendmodbus1=millis();
+    sendmodbus2=sendmodbus1;
+  }
+  if (sendmodbus1 - sendmodbus2 >= 5000) {
     ++currentReadingValue;
     currentReadingValue=currentReadingValue%8;
     if (currentReadingValue == CURRENT_PRODUCTION_READ){
@@ -736,11 +791,11 @@ void loop() {
       MODBUS_INTERFACE.readHoldingRegisters(0x01, 0x0F, 2);
     }
     if (currentReadingValue == B_PHASE_VOLTAGE_READ){
-      Serial.print("sending Modbus request (read a-phase voltage)...\n");
+      Serial.print("sending Modbus request (read b-phase voltage)...\n");
       MODBUS_INTERFACE.readHoldingRegisters(0x01, 0x11, 2);
     }
     if (currentReadingValue == C_PHASE_VOLTAGE_READ){
-      Serial.print("sending Modbus request (read a-phase voltage)...\n");
+      Serial.print("sending Modbus request (read c-phase voltage)...\n");
       MODBUS_INTERFACE.readHoldingRegisters(0x01, 0x13, 2);
     }
     if (currentReadingValue == TOTAL_PRODUCTION_HIGH_READ){
@@ -752,14 +807,20 @@ void loop() {
       MODBUS_INTERFACE.readHoldingRegisters(0x01, 0x16, 2);
     }
     oldMeasureTimeMODBUS = currentTime;
+    sendmodbus2=sendmodbus1;
   }
 
-  if (currentTime.unixtime() - oldMeasureTime.unixtime() >= 1) {
+  gettemp1=millis();
+  if (gettemp2>gettemp1) {
+    gettemp1=millis();
+    gettemp2=gettemp1;
+  }
+  if (gettemp1 - gettemp2 >= 5000) {
     getCurrentTemp();
-    oldMeasureTime = currentTime;
+    gettemp2=gettemp1;
   }
 
-  if (currentProduction < valuesTab[MIN_PRODUCTION]) {
+  if (currentProduction < (double) valuesTab[MIN_PRODUCTION]) {
     heaterState = false;
     if (valuesTab[EXPECTED_HOUR] - 3 <= currentTime.hour()) {
       heaterState = true;
@@ -819,14 +880,6 @@ void loop() {
       }
   }
 
-  if ((int)waterTemp >= valuesTab[MIN_TEMP] + valuesTab[MAX_TEMP]) {
-    heaterState = false;
-  }
-
-  if ((int)waterTemp <= 40) {
-    heaterState = true;
-  }
-
   if (currentTime.hour() >= 22 || currentTime.hour() <= 6) {
     heaterState = true;
       if ((int)waterTemp >= valuesTab[MIN_TEMP] + valuesTab[MAX_TEMP]) {
@@ -847,10 +900,33 @@ void loop() {
       }
   }
 
+  if ((int)waterTemp >= valuesTab[MIN_TEMP] + valuesTab[MAX_TEMP]) {
+    heaterState = false;
+  }
+
+  if ((int)waterTemp <= 40) {
+    heaterState = true;
+  }
+
   if (heaterState) {
     digitalWrite(RELAY, LOW);
   } else {
     digitalWrite(RELAY, HIGH);
+  }
+  int t1 = millis();
+  int t2 = t1;
+  if (WiFi.status() != WL_CONNECTED) {
+    WiFi.reconnect();
+  }
+
+  if (rtcrst1 - rtcrst2 >= 10000) {
+    rtc.start();
+    rtcrst2 = rtcrst1;
+  }
+  rtcrst1 = millis();
+  if (rtcrst2 > rtcrst1) {
+    rtcrst1=millis();
+    rtcrst2=rtcrst1;
   }
 
   delay(50);
