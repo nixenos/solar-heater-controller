@@ -85,6 +85,9 @@ int minPrduction = 1;
 int hourTempExpected = 18;
 int lastReadTime = 0;
 
+unsigned long productionchanging1 = millis();
+unsigned long productionchanging2 = productionchanging1;
+
 double todayProductionValue = 0.0;
 double todayGenerationTime = 0.0;
 
@@ -300,11 +303,13 @@ void setup() {
 
     Serial.printf("\nval: %f", temporaryValue);
     Serial.print("\n\n");
-    DateTime currentTime = rtc.now();
-    if (currentTime.unixtime() - oldMeasureTimeProductionUpdate.unixtime() >= 1800 && currentReadingValue == CURRENT_PRODUCTION_READ) { //30 minutes
-    //if (currentTime.unixtime() - oldMeasureTimeProductionUpdate.unixtime() >= 5) { //5 seconds
+    productionchanging1 = millis();
+    if (productionchanging2 > productionchanging1) {
+      productionchanging1 = millis();
+      productionchanging2 = productionchanging1;
+    }
+    if (productionchanging1 - productionchanging2 >= 300000 && currentReadingValue == CURRENT_PRODUCTION_READ) {
       currentProduction = temporaryValue;
-      oldMeasureTimeProductionUpdate = currentTime;
     }
     if (currentReadingValue == CURRENT_PRODUCTION_READ) {
       currentDisplayProduction = temporaryValue;
