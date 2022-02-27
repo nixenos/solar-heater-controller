@@ -14,6 +14,7 @@
 #include "ESPAsyncWebServer.h"
 #include <ESPNtpClient.h>
 #include "time.h"
+#include <AsyncElegantOTA.h>
 
 #define DEBOUNCE_TIME 50
 #define EEPROM_SIZE 512
@@ -486,7 +487,8 @@ void setup() {
     String temp = "total_production " + stringify(total_production);
     request->send_P(200, "text/plain", temp.c_str());
   });
-
+  
+  AsyncElegantOTA.begin(&server);
   server.begin();
 
   NTP.onNTPSyncEvent ([] (NTPEvent_t event) {
