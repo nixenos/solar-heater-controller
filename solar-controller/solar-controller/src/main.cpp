@@ -119,6 +119,7 @@ bool pageUpMarker = false;
 bool pageDownMarker = false;
 
 bool heaterState = false;
+bool oldHeaterState = false;
 bool HEAT_MAX_FLAG = false;
 bool HEAT_MIN_FLAG = true;
 
@@ -130,6 +131,9 @@ unsigned long gettemp2 = gettemp1;
 
 unsigned long sendmodbus1 = millis();
 unsigned long sendmodbus2 = sendmodbus1;
+
+unsigned long heating1 = millis();
+unsigned long heating2 = heating1;
 
 DateTime oldMeasureTime;
 DateTime oldMeasureTimeMODBUS;
@@ -238,8 +242,11 @@ void printExpectedHourString() {
 
 void getCurrentTemp() {
   sensors.requestTemperatures(); 
+  delay(100);
   float cachedTemp = sensors.getTempCByIndex(0);
-  waterTemp = cachedTemp;
+  if (cachedTemp > 0){
+    waterTemp = cachedTemp;
+  }
 }
 
 String stringify(double value) {
@@ -311,6 +318,7 @@ void setup() {
     }
     if (productionchanging1 - productionchanging2 >= 300000 && currentReadingValue == CURRENT_PRODUCTION_READ) {
       currentProduction = temporaryValue;
+      productionchanging2 = productionchanging1;
     }
     if (currentReadingValue == CURRENT_PRODUCTION_READ) {
       currentDisplayProduction = temporaryValue;
@@ -430,6 +438,11 @@ void setup() {
 
   server.on("/production/current", HTTP_GET, [](AsyncWebServerRequest *request){
     String temp = "current_production " + stringify(currentDisplayProduction);
+    request->send_P(200, "text/plain", temp.c_str());
+  });
+  
+  server.on("/production/heater_value", HTTP_GET, [](AsyncWebServerRequest *request){
+    String temp = "heater_production_value " + stringify(currentProduction);
     request->send_P(200, "text/plain", temp.c_str());
   });
   
@@ -827,9 +840,9 @@ void loop() {
     gettemp2=gettemp1;
   }
 
-  if (currentProduction < (double) valuesTab[MIN_PRODUCTION]) {
+  if ((int)currentDisplayProduction < valuesTab[MIN_PRODUCTION]) {
     heaterState = false;
-    if (valuesTab[EXPECTED_HOUR] - 3 <= currentTime.hour()) {
+    if (abs(valuesTab[EXPECTED_HOUR] - currentTime.hour()) <= 3 && valuesTab[EXPECTED_HOUR] - currentTime.hour() >= 0) {
       heaterState = true;
       if ((int)waterTemp >= valuesTab[MIN_TEMP] + valuesTab[MAX_TEMP]) {
         HEAT_MAX_FLAG = true;
@@ -843,90 +856,99 @@ void loop() {
         } else {
           heaterState = true;
         }
+      }
+      else {
+        heaterState = false;
       }
       if ((int)waterTemp < valuesTab[MIN_TEMP] - valuesTab[MAX_TEMP]) {
         heaterState = true;
       }
     }
-  // } else {
-  //     heaterState = true;
-  //     if ((int)waterTemp >= valuesTab[MIN_TEMP] + valuesTab[MAX_TEMP]) {
-  //       HEAT_MAX_FLAG = true;
-  //     }
-  //     if ((int)waterTemp <= valuesTab[MIN_TEMP] - valuesTab[MAX_TEMP]) {
-  //       HEAT_MAX_FLAG = false;
-  //     }
-  //     if (abs(valuesTab[MIN_TEMP] - (int)waterTemp) <= valuesTab[MAX_TEMP]) {
-  //       if (HEAT_MAX_FLAG) {
-  //         heaterState = false;
-  //       } else {
-  //         heaterState = true;
-  //       }
-  //     }
-  //     if ((int)waterTemp < valuesTab[MIN_TEMP] - valuesTab[MAX_TEMP]) {
-  //       heaterState = true;
-  //     }
-  // }
+    else {
+      heaterState = false;
+    }
   } else {
       heaterState = true;
-      if ((int)waterTemp >= 75 + 5) {
+      if (waterTemp >= 72.0) { // change
         HEAT_MAX_FLAG = true;
+        heaterState = false;
       }
-      if ((int)waterTemp <= 75 - 5) {
+      if (waterTemp <= 66.0) {
         HEAT_MAX_FLAG = false;
+        heaterState = true;
       }
-      if (abs(75 - (int)waterTemp) <= 5) {
+      if (waterTemp < 72.0 && waterTemp > 66.0) {
         if (HEAT_MAX_FLAG) {
           heaterState = false;
         } else {
           heaterState = true;
         }
       }
-      if ((int)waterTemp < 75 - 5) {
+      if (waterTemp <= 66.0) {
         heaterState = true;
       }
   }
 
-  if (currentTime.hour() >= 22 || currentTime.hour() <= 6) {
-    heaterState = true;
-      if ((int)waterTemp >= valuesTab[MIN_TEMP] + valuesTab[MAX_TEMP]) {
-        HEAT_MAX_FLAG = true;
-      }
-      if ((int)waterTemp <= valuesTab[MIN_TEMP] - valuesTab[MAX_TEMP]) {
-        HEAT_MAX_FLAG = false;
-      }
-      if (abs(valuesTab[MIN_TEMP] - (int)waterTemp) <= valuesTab[MAX_TEMP]) {
-        if (HEAT_MAX_FLAG) {
-          heaterState = false;
-        } else {
-          heaterState = true;
-        }
-      }
-      if ((int)waterTemp < valuesTab[MIN_TEMP] - valuesTab[MAX_TEMP]) {
-        heaterState = true;
-      }
-  }
-
-  if ((int)waterTemp >= valuesTab[MIN_TEMP] + valuesTab[MAX_TEMP]) {
+  if (currentTime.hour() >= valuesTab[EXPECTED_HOUR] && currentTime.hour() <= 22) {
     heaterState = false;
+      if ((int)waterTemp >= 50 + 5) {
+        HEAT_MAX_FLAG = true;
+      }
+      if ((int)waterTemp <= 50 - 5) {
+        HEAT_MAX_FLAG = false;
+      }
+      if (abs(50 - (int)waterTemp) <= 5) {
+        if (HEAT_MAX_FLAG) {
+          heaterState = false;
+        } else {
+          heaterState = true;
+        }
+      }
+      if ((int)waterTemp < 50 - 5) {
+        heaterState = true;
+      }
+  }
+
+  if ((int)waterTemp >= 76) {
+    heaterState = false;
+    digitalWrite(RELAY, HIGH);
   }
 
   if ((int)waterTemp <= 40) {
     heaterState = true;
+    digitalWrite(RELAY, LOW);
   }
 
+  // if ((int)waterTemp < 0) {
+  //   sensors.resetAlarmSearch();
+  //   delay(5000);
+  //   getCurrentTemp();
+  //   if ((int)waterTemp < 0) {
+  //     ESP.restart();
+  //   }
+  // }
+
+  heating1 = millis();
+  if (heating2 > heating1) {
+    heating1 = millis();
+    heating2 = heating1;
+  }
+  if (heating1-heating2 >= 60000){
+    heating2=heating1;
   if (heaterState) {
     digitalWrite(RELAY, LOW);
   } else {
     digitalWrite(RELAY, HIGH);
   }
+  }
+
   int t1 = millis();
   int t2 = t1;
   if (WiFi.status() != WL_CONNECTED) {
     WiFi.reconnect();
   }
 
-  if (rtcrst1 - rtcrst2 >= 10000) {
+  if (rtcrst1 - rtcrst2 >= 60000) {
     rtc.start();
     rtcrst2 = rtcrst1;
   }
